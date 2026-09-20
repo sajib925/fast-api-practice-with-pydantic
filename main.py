@@ -1,87 +1,72 @@
-from fastapi import FastAPI, Path, HTTPException, Query, Body
-import json
-from students_pydantic import Students, StudentUpdate
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
+from typing import Annotated
+from models import Todo
+import models
+from database import engine, SessionLocal
+from pydantic_todos import TodoPydantic, TodoPydanticUpdate
 from fastapi.responses import JSONResponse
+
 
 app = FastAPI()
 
+models.Base.metadata.create_all(engine)
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-def load_data():
-    with open('students.json', 'r') as f:
-        data = json.load(f)
-    return data
-def save_data(data):
-    with open('students.json', 'w') as f:
-        json.dump(data, f)
+db_dependency = Annotated[Session, Depends(get_db)]
 
-@app.get("/")
-def welcome():
-    return "Hello! From students management Api"
+@app.get("/todos")
+def read_todos(db: db_dependency):
+    return db.query(Todo).all()
 
-@app.get("/student/{student_id}")
-def view_student(student_id:str = Path(..., description="This is id of student", example="S001")):
-    data = load_data()
-    if student_id in data:
-        return data[student_id]
-    else:
-        raise HTTPException(status_code=404,detail="Students Not Found")
+@app.get("/todo/{todo_id}")
+def read_todos(db: db_dependency, todo_id: int):
+
+    specific_todo = db.query(Todo).filter(Todo.id == todo_id).first()
     
-@app.get("/students")
-def view_student(sorted_by:str = Query(..., description="Sort on the bassis of student_class age."), order: str = Query('asc', description="choose order asc by des")):
-
-    valid_fields = [ "age", "student_class", "roll", "Math_marks", "English_marks", "Science_marks",]
-
-    if sorted_by not in valid_fields:
-        raise HTTPException(status_code=404,detail=f"Invalid Field selected by {valid_fields}")
-
-    if order not in ['asc', 'desc']:
-        raise HTTPException(status_code=404,detail=f"Choose between asc or desc")
-    
-    data = load_data()
-
-    if order == 'asc':
-        sorted_data = list(data.values())
-        sorted_data.sort(key= lambda x: x[sorted_by])
-        return sorted_data
+    if specific_todo is not None:
+        return specific_todo
     else:
-        sorted_data = list(data.values())
-        sorted_data.sort(key= lambda x: x[sorted_by], reverse=True)
-        return sorted_data       
+        raise HTTPException(status_code=404, detail="Todo not found")
 
 @app.post("/create")
-def create_student(student:Students):
-    data = load_data()
-
-    if student.id in data:
-        raise HTTPException(status_code=400, detail=f'Student id already exits')
+def write_totdos(db: db_dependency, new_todo: TodoPydantic):
+    todo_model = Todo(**new_todo.model_dump())
+    db.add(todo_model)
+    db.commit()
+    return JSONResponse(status_code=201, content={'message': 'todo created successfully'})
     
-    data[student.id] = student.model_dump(exclude=['id'])
+@app.put("/edit/{todo_id}")
+def read_todos(db: db_dependency, todo_id: int, update_todo: TodoPydanticUpdate):
 
-    save_data(data)
-    return JSONResponse(status_code=201, content={"message": "Successfully Created Student"})
-
-@app.put("/update/{student_id}")
-def update_student(student: StudentUpdate, student_id:str):
-    data = load_data()
-
-    if student_id not in data:
-        raise HTTPException(status_code=400, detail=f'Student Not Found')
+    todo = db.query(Todo).filter(Todo.id == todo_id).first()
     
-    data[student_id].update(student.model_dump(exclude_unset=True))
+    if todo is None:
+        raise HTTPException(status_code=404, detail="Todo not found")
 
-    save_data(data)
-    return JSONResponse(status_code=201, content={"message": "Successfully Updated Student"})
+    update_data = update_todo.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(todo, key, value)
 
-@app.delete("/update/{student_id}")
-def delete_student(student_id:str):
-    data = load_data()
+    db.commit()
 
-    if student_id not in data:
-        raise HTTPException(status_code=400, detail=f'Student Not Found')
+    return JSONResponse(status_code=200, content={'message': 'todos updated successfully'})
+@app.delete("/edit/{todo_id}")
+def read_todos(db: db_dependency, todo_id: int):
+
+    todo = db.query(Todo).filter(Todo.id == todo_id).first()
     
-    del data[student_id]
+    if todo is None:
+        raise HTTPException(status_code=404, detail="Todo not found")
+    
+    db.query(Todo).filter(Todo.id == todo_id).delete()
 
-    save_data(data)
-    return JSONResponse(status_code=201, content={"message": "Successfully Deleted Student"})
+    db.commit()
 
+    return JSONResponse(status_code=200, content={'message': 'todos deleted successfully'})

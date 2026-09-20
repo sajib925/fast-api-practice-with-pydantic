@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic_todos import BaseModel, Field
 from typing import Annotated, Optional
 
 class Students(BaseModel):
